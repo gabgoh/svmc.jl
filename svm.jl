@@ -42,7 +42,7 @@ end
 # ───────────────────────────────────────────────────────────────────
 function bias( y, A, w, xstar )
 
-  z0 = 1 - y.*A'xstar  # the left part of 1 - YAx + Yρ
+  z0 = 1 - y.*A*xstar  # the left part of 1 - YAx + Yρ
   yw = y.*w            # Potential gradient weights
 
   # Find all the discontinuties in the subgradient
@@ -50,7 +50,7 @@ function bias( y, A, w, xstar )
   #
   # f(ρ) = w'max{ 1 - Y(Ax - ρ) , 0 }
   #
-  bpts = sort(((y.*A'xstar - 1)./y)[:])
+  bpts = sort(((y.*A*xstar - 1)./y)[:])
 
   function ∂f(ρ)
     z = z0 + y.*ρ   
@@ -201,7 +201,7 @@ function svmc(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
   vsol = sol.y[1:end-k]
   xsol = A'*(y.*vsol)
   λsol = sol.y[end-k+1:end]
-  ρsol = bias( y, A', cat(1, w_[1], λsol.*w_[2:end]...), xsol )
+  ρsol = bias( y, A, cat(1, w_[1], λsol.*w_[2:end]...), xsol )
 
   return (xsol, ρsol, vsol, λsol)
 
@@ -210,26 +210,30 @@ end
 # ───────────────────────────────────────────────────────────────────
 # Wrapper around LIBSVM
 # ───────────────────────────────────────────────────────────────────
-function svm(y, A, w; ϵ = 1e-6, engine = :libsvm)
+function svm(y, A, w; ϵ = 1e-6)
 
-  if engine == :libsvm
-    # Do training
-    model  = svm_train(y, A', w, verbose = false, eps = ϵ)
-    (x, ρ) = get_primal_variables(model)
-    v      = abs(get_dual_variables(model))
-    return (x, ρ, v)
-  end
+  # Do training
+  model  = svm_train(y, A', w, verbose = false, eps = ϵ)
+  (x, ρ) = get_primal_variables(model)
+  v      = abs(get_dual_variables(model))
 
-  if engine == :intpoint
-    # Do training
-    (x, ρ, v, _) = svmc(y, A, w, verbose = false, ϵ = ϵ*10e-4)
-    return (x, ρ, v)
-  end
-
-  throw("Engine not recognized. use ither :libsvm or :intpoint")
+  # pred(A :: Matrix) = 
+  #   [svm_predict(model, A[i,:][:])[2][1] for i = 1:size(A,1)]
+  
+  # pred(A :: SparseMatrixCSC{Float64, Int64}) = 
+  #   [svm_predict(model, full(A[i,:])[:])[2][1] for i = 1:size(A,1)]
+  
+  return (x, ρ, v)
 
 end
 
+function svm_intpoint(y, A, w; ϵ = 1e-6)
+
+  # Do training
+  (x, ρ, v, _) = svmc(y, A, w, verbose = false, ϵ = ϵ*10e-4)
+  return (x, ρ, v)
+
+end
 # ───────────────────────────────────────────────────────────────────
 # Same interface as svmc, except using LIBSVM.
 # ───────────────────────────────────────────────────────────────────  
@@ -304,7 +308,7 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
 
   for i = 1:10
     
-    (x,ρ,v,λ) = svmcbisect( y[1][I[1]], A[1][I[1],:], w[1][I[1]],             # Objective
+    (x,ρ,v,λ) = svmc( y[1][I[1]], A[1][I[1],:], w[1][I[1]],             # Objective
                           y[2][I[2]], A[2][I[2],:], w[2][I[2]]/(1 - δ[2]),  # Constraint
                           verbose = false )                  
 
@@ -338,48 +342,5 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
 
   println("  ┖────────────────────────────────────────────────────────────────── ")    
   return (x, ρ, v)
-
-end
-
-function test()
-
-  srand(1)
-  n           = 4
-  d           = 10000
-  Red         = 1:Integer(d)
-  Blu         = (Integer(d)+1):(2*d)
-  m           = 2*d
-  y           = [ones(length(Red)); -ones(length(Blu))]
-  A           = 1*[randn(d,n); randn(d,n)]
-  A[Red,2]    = A[Red,2] + 4
-  A[Red,1]    = A[Red,1] + 3
-  A[Blu,2]    = A[Blu,2] + 5
-  A           = 3*A
-  w           = rand(2*d)
-
-  @time (x,ρ,v) = svmc(y, A, w, ones(size(y)), A, w)
-  @time (x1,ρ1,v1) = svm(y, A, w);
-
-end
-
-function test2()
-  
-  srand(1)
-  n           = 4
-  d           = 1000
-  Red         = 1:Integer(d)
-  Blu         = (Integer(d)+1):(2*d)
-  m           = 2*d
-  y           = [ones(length(Red)); -ones(length(Blu))]
-  A           = 1*[randn(d,n); randn(d,n)]
-  A[Red,2]    = A[Red,2] + 4
-  A[Red,1]    = A[Red,1] + 3
-  A[Blu,2]    = A[Blu,2] + 5
-  w           = ones(2*d)
-
-  (x,ρ,v) = svmcbisect(y, A, w, ones(size(y)), A, w/500)
-
-  σ = sum(max( 1 - (A*x - ρ)[:], 0))
-  println(σ)
 
 end

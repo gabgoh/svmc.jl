@@ -4,7 +4,7 @@ using ProgressMeter
 using Debug
 include("svm.jl")
 
-dataset = 2
+dataset = 1
 toplot = false
 
 # Real Dataset
@@ -12,6 +12,7 @@ if dataset == 1
   (y,A) = parse_libSVM("data/a1a")
   n = size(A,1)
   m = size(A,2)
+  A = A'
 end
 
 # Fake Dataset
@@ -29,24 +30,22 @@ if dataset == 2
   A[Blu,2]    = A[Blu,2] + 5
   A[Red[1],1:2] = [-2 5]
   A[Blu[1:10],1] = A[Blu[1:10],1] - 10;    
-  A           = A'
-  A           = 1*A
 end
 
 e           = ones(length(y))
 y₊          = y .> 0
 y₋          = y .< 0
 
-ConstraintRange = linspace(1,2000, 100)
+ConstraintRange = linspace(1,2000, 200)
 
 ramp = DataFrame(fp = Float64[], fn  = Float64[])
 
 for η = ConstraintRange
 
-  (x, ρ, v) = svmramp( y[y₊], A[:,y₊]', e[y₊], 
-                       y[y₋], A[:,y₋]', e[y₋]/η )
+  (x, ρ, v) = svmramp( y[y₊], A[y₊,:], e[y₊], 
+                       y[y₋], A[y₋,:], e[y₋]/η )
 
-  (err, fp, fn, tp, tn) = calc_error(A, y, a -> sign(a'x - ρ)[1] )
+  (err, fp, fn, tp, tn) = calc_error(A', y, a -> sign(a'x - ρ)[1] )
 
   push!(ramp, [fp fn])
 
@@ -56,10 +55,10 @@ hinge = DataFrame(fp = Float64[], fn  = Float64[])
 
 for η = ConstraintRange
 
-  (x, ρ, v) = svmc( y[y₊], A[:,y₊]', e[y₊], 
-                    y[y₋], A[:,y₋]', e[y₋]/η)
+  (x, ρ, v) = svmc( y[y₊], A[y₊,:], e[y₊], 
+                    y[y₋], A[y₋,:], e[y₋]/η)
 
-  (err, fp, fn, tp, tn) = calc_error(A, y, a -> sign(a'x - ρ)[1] )
+  (err, fp, fn, tp, tn) = calc_error(A', y, a -> sign(a'x - ρ)[1] )
 
   push!(hinge, [fp fn])
 
@@ -67,11 +66,11 @@ end
 
 biasshift = DataFrame(fp = Float64[], fn  = Float64[])
 
-(x,ρ,v) = svmc(y, A', e)
+(x,ρ,v) = svmc(y, A, e)
 
 for b = linspace(-5,5,1000)
 
-  (err, fp, fn, tp, tn) = calc_error(A, y, a -> sign(a'x - ρ + b)[1] )
+  (err, fp, fn, tp, tn) = calc_error(A', y, a -> sign(a'x - ρ + b)[1] )
   push!(biasshift, [fp fn])
  
 end
@@ -84,8 +83,8 @@ if false
 
   figure()
 
-  plot( A[ 1 , y .== -1]' , A[ 2 , y .== -1]',"r." )
-  plot( A[ 1 , y .==  1]' , A[ 2 , y .==  1]',"b." )
+  plot( A[ y .== -1 , 1] , A[ y .== -1 , 1],"r." )
+  plot( A[ y .==  1 , 1] , A[ y .==  1 , 1],"b." )
 
   decbound(y)  = (ρ - x[1]*y)/x[2]
   decbound2(y) = (-1 + ρ - x[1]*y)/x[2]
