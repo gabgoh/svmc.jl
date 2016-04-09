@@ -36,16 +36,16 @@ e           = ones(length(y))
 y₊          = y .> 0
 y₋          = y .< 0
 
-ConstraintRange = linspace(1,2000, 200)
+ConstraintRange = linspace(1,2000,100)
 
 ramp = DataFrame(fp = Float64[], fn  = Float64[])
 
 for η = ConstraintRange
 
-  (x, ρ, v) = svmramp( y[y₊], A[y₊,:], e[y₊], 
+  (pred, v) = svmramp( y[y₊], A[y₊,:], e[y₊], 
                        y[y₋], A[y₋,:], e[y₋]/η )
 
-  (err, fp, fn, tp, tn) = calc_error(A', y, a -> sign(a'x - ρ)[1] )
+  (err, fp, fn, tp, tn) = calc_error(A', y, a -> sign(pred(a'))[1]  )
 
   push!(ramp, [fp fn])
 
@@ -55,10 +55,10 @@ hinge = DataFrame(fp = Float64[], fn  = Float64[])
 
 for η = ConstraintRange
 
-  (x, ρ, v) = svmc( y[y₊], A[y₊,:], e[y₊], 
+  (pred, v) = svmc( y[y₊], A[y₊,:], e[y₊], 
                     y[y₋], A[y₋,:], e[y₋]/η)
 
-  (err, fp, fn, tp, tn) = calc_error(A', y, a -> sign(a'x - ρ)[1] )
+  (err, fp, fn, tp, tn) = calc_error(A', y, a -> sign(pred(a'))[1] )
 
   push!(hinge, [fp fn])
 
@@ -66,11 +66,11 @@ end
 
 biasshift = DataFrame(fp = Float64[], fn  = Float64[])
 
-(x,ρ,v) = svmc(y, A, e)
+(pred, v) = svmc(y, A, e)
 
 for b = linspace(-5,5,1000)
 
-  (err, fp, fn, tp, tn) = calc_error(A', y, a -> sign(a'x - ρ + b)[1] )
+  (err, fp, fn, tp, tn) = calc_error(A', y, a -> sign(pred(a') + b)[1] )
   push!(biasshift, [fp fn])
  
 end

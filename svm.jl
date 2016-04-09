@@ -1,5 +1,6 @@
 using IntPoint
 using LIBSVM
+using DataFrames
 export svmc, svm
 include("bisect.jl")
 include("misc.jl")
@@ -203,7 +204,7 @@ function svmc(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
   λsol = sol.y[end-k+1:end]
   ρsol = bias( y, A, cat(1, w_[1], λsol.*w_[2:end]...), xsol )
 
-  return (xsol, ρsol, vsol, λsol)
+  return (A -> A*xsol - ρsol, vsol, λsol)
 
 end
 
@@ -216,14 +217,11 @@ function svm(y, A, w; ϵ = 1e-6)
   model  = svm_train(y, A', w, verbose = false, eps = ϵ)
   (x, ρ) = get_primal_variables(model)
   v      = abs(get_dual_variables(model))
-
-  # pred(A :: Matrix) = 
-  #   [svm_predict(model, A[i,:][:])[2][1] for i = 1:size(A,1)]
   
-  # pred(A :: SparseMatrixCSC{Float64, Int64}) = 
-  #   [svm_predict(model, full(A[i,:])[:])[2][1] for i = 1:size(A,1)]
+  pred = A -> [svm_predict(model, full(A[i,:])[:])[2][1] 
+               for i = 1:size(A,1)]
   
-  return (x, ρ, v)
+  return (pred, v)
 
 end
 
@@ -231,13 +229,35 @@ function svm_intpoint(y, A, w; ϵ = 1e-6)
 
   # Do training
   (x, ρ, v, _) = svmc(y, A, w, verbose = false, ϵ = ϵ*10e-4)
-  return (x, ρ, v)
+
+  return (A -> A*x - ρ, v)
 
 end
+
 # ───────────────────────────────────────────────────────────────────
 # Same interface as svmc, except using LIBSVM.
 # ───────────────────────────────────────────────────────────────────  
-function svmcbisect(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = false)
+function svmcbisect(y₀, A₀, w₀, P...; 
+  ϵ = 1e-6, 
+  verbose = false,
+  kernel = :linear )
+  
+  # Φ = 0
+  # if kernel == :linear
+  #   Φ(u,v) = u'v
+  # end
+
+  # if kernel == :polynoial
+  #   Φ(u,v) = (gamma*u'v + coef0)^degree
+  # end
+
+  # if kernel == :radialbasis
+  #   Φ(u,v) = exp(-gamma*|u-v|^2)
+  # end
+
+  # if kernel == :sigmoid
+  #   Φ(u,v) = tanh(gamma*u'*v + coef0)
+  # end
 
   (y_,A_,w_,m_) = parseargs(y₀, A₀, w₀, P)
 
@@ -254,16 +274,16 @@ function svmcbisect(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = false)
     w      = [w_[1];t*w_[2]];
 
     # Do training
-    (x, ρ, v) = svm(y,A,w,ϵ = ϵ)
+    (pred, v) = svm(y,A,w,ϵ = ϵ)
 
     # Calculate Primal/Dual objective values
-    pval   = vecdot(w, max( 1 - (y.*(A*x - ρ)[:]), 0)) + 0.5*norm(x)^2
+    pval   = vecdot(w, max( 1 - (y.*pred(A)[:]), 0)) + 0.5*norm(x)^2
     dval   = 0.5*norm(A'*(y.*v))^2 - sum(v)
     
     # Gradient
     (m₀,n) = size(A₀)
 
-    gval   = vecdot(w_[2], max( 1 - (y_[2].*(A_[2]*x - ρ)) , 0))
+    gval   = vecdot(w_[2], max( 1 - (y_[2].*pred(A_[2])) , 0))
 
     # Log information with each evaluation
     xρv[1] = x; xρv[2] = ρ; xρv[3] = v;
@@ -276,9 +296,17 @@ function svmcbisect(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = false)
               il = 0, iu = 10000/mean(w_[2]), 
               tol = 5*mean(w_[2]) )
 
-  return (xρv[1], xρv[2], xρv[3], λ)
+  x = xρv[1]
+  ρ = xρv[2]
+  v = xρv[3]
+
+  return (A -> A*x - ρ, xρv[3], λ)
 
 end
+
+# ───────────────────────────────────────────────────────────────────
+# Ramp version of LIBSVM.
+# ───────────────────────────────────────────────────────────────────  
 
 function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
 
@@ -308,16 +336,16 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
 
   for i = 1:10
     
-    (x,ρ,v,λ) = svmc( y[1][I[1]], A[1][I[1],:], w[1][I[1]],             # Objective
-                          y[2][I[2]], A[2][I[2],:], w[2][I[2]]/(1 - δ[2]),  # Constraint
-                          verbose = false )                  
+    (pred,v,λ) = svmc( y[1][I[1]], A[1][I[1],:], w[1][I[1]],             # Objective
+                      y[2][I[2]], A[2][I[2],:], w[2][I[2]]/(1 - δ[2]),  # Constraint
+                      verbose = false )                  
 
     for j = 1:length(y)
 
-      z = y[j].*(A[j]*x - ρ)
+      z = y[j].*pred(A[j])
 
       I[j] = ( z .> -1 )[:] 
-      δ[j] = 2*sum(w[j][ !I[j] ]) # Points upper bounded by 1
+      δ[j] = 2*sum(w[j][ !I[j] ]) # Points upper bounded by constant 
       
       if δ[j] < 0; println("Infeasible! ", δ[j]); break; end
 
@@ -335,12 +363,12 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
 
     if abs(RVal[2] - 1) < 1e-3
       println("  ┖────────────────────────────────────────────────────────────────── ")  
-      return (x, ρ, v)
+      return (pred, v)
     end
 
   end
 
   println("  ┖────────────────────────────────────────────────────────────────── ")    
-  return (x, ρ, v)
+  return (pred, v)
 
 end
