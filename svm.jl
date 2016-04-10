@@ -211,16 +211,15 @@ end
 # ───────────────────────────────────────────────────────────────────
 # Wrapper around LIBSVM
 # ───────────────────────────────────────────────────────────────────
-function svm(y, A, w; ϵ = 1e-6)
+@debug function svm(y, A, w; ϵ = 1e-6)
 
   # Do training
   model  = svm_train(y, A', w, verbose = false, eps = ϵ)
   (x, ρ) = get_primal_variables(model)
   v      = abs(get_dual_variables(model))
   
-  pred = A -> [svm_predict(model, full(A[i,:])[:])[2][1] 
-               for i = 1:size(A,1)]
-  
+  pred = A -> (A*x - ρ)
+
   return (pred, v)
 
 end
@@ -228,16 +227,15 @@ end
 function svm_intpoint(y, A, w; ϵ = 1e-6)
 
   # Do training
-  (x, ρ, v, _) = svmc(y, A, w, verbose = false, ϵ = ϵ*10e-4)
-
-  return (A -> A*x - ρ, v)
+  (pred, v) = svmc(y, A, w, verbose = false, ϵ = 1e-8)
+  return (pred, v)
 
 end
 
 # ───────────────────────────────────────────────────────────────────
 # Same interface as svmc, except using LIBSVM.
 # ───────────────────────────────────────────────────────────────────  
-function svmcbisect(y₀, A₀, w₀, P...; 
+@debug function svmcbisect(y₀, A₀, w₀, P...; 
   ϵ = 1e-6, 
   verbose = false,
   kernel = :linear )
@@ -264,7 +262,7 @@ function svmcbisect(y₀, A₀, w₀, P...;
   y = cat(1, y_...)
   A = cat(1, A_...)
 
-  xρv = Array{Any}(3)
+  pred_v = Array{Any}(3)
 
   # Todo fix some precision issues, as well as starting interval for search
   # 0-2 works well
@@ -277,6 +275,7 @@ function svmcbisect(y₀, A₀, w₀, P...;
     (pred, v) = svm(y,A,w,ϵ = ϵ)
 
     # Calculate Primal/Dual objective values
+    x      = A'*(y.*v)
     pval   = vecdot(w, max( 1 - (y.*pred(A)[:]), 0)) + 0.5*norm(x)^2
     dval   = 0.5*norm(A'*(y.*v))^2 - sum(v)
     
@@ -286,21 +285,21 @@ function svmcbisect(y₀, A₀, w₀, P...;
     gval   = vecdot(w_[2], max( 1 - (y_[2].*pred(A_[2])) , 0))
 
     # Log information with each evaluation
-    xρv[1] = x; xρv[2] = ρ; xρv[3] = v;
+    pred_v[1] = pred; pred_v[2] = v;
 
-    return ((x, ρ, v), (-pval + τ*t, dval + τ*t, gval - τ))
+    return (-pval + τ*t, dval + τ*t, gval - τ)
 
   end
 
-  λ = bisect( (x,ϵ) -> svm_coverage_weights!(x,ϵ,1)[2] ;
+  λ = bisect( (x,ϵ) -> svm_coverage_weights!(x,ϵ,1) ;
               il = 0, iu = 10000/mean(w_[2]), 
-              tol = 5*mean(w_[2]) )
+              tol = 0.01*mean(w_[2]) ,
+              verbose = verbose)
 
-  x = xρv[1]
-  ρ = xρv[2]
-  v = xρv[3]
+  pred = pred_v[1]
+  v = pred_v[2]
 
-  return (A -> A*x - ρ, xρv[3], λ)
+  return (pred, v, λ)
 
 end
 
@@ -334,11 +333,14 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
   println("     i ┃  R₀          H₀          R₁          H₁          t")
   println("  ┎────────────────────────────────────────────────────────────────── ")
 
+  pred = nothing
+  v = nothing
+
   for i = 1:10
     
-    (pred,v,λ) = svmc( y[1][I[1]], A[1][I[1],:], w[1][I[1]],             # Objective
-                      y[2][I[2]], A[2][I[2],:], w[2][I[2]]/(1 - δ[2]),  # Constraint
-                      verbose = false )                  
+    (pred,v,λ) = svmcbisect( y[1][I[1]], A[1][I[1],:], w[1][I[1]],             # Objective
+                       y[2][I[2]], A[2][I[2],:], w[2][I[2]]/(1 - δ[2]),  # Constraint
+                       verbose = false )                  
 
     for j = 1:length(y)
 
@@ -370,5 +372,46 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
 
   println("  ┖────────────────────────────────────────────────────────────────── ")    
   return (pred, v)
+
+end
+
+function test1()
+  
+  srand(1)
+  n           = 4
+  d           = 10000
+  Red         = 1:Integer(d)
+  Blu         = (Integer(d)+1):(2*d)
+  m           = 2*d
+  y           = [ones(length(Red)); -ones(length(Blu))]
+  A           = 1*[randn(d,n); randn(d,n)]
+  A[Red,2]    = A[Red,2] + 4
+  A[Red,1]    = A[Red,1] + 3
+  A[Blu,2]    = A[Blu,2] + 5
+  A           = 3*A
+  w           = rand(2*d)
+
+  @time (x,ρ,v) = svmc(y, A, w, ones(size(y)), A, w)
+  @time (x1,ρ1,v1) = svm(y, A, w);
+
+end
+
+
+function test2()  
+
+  srand(1)
+  n           = 2
+  d           = 1000
+  Red         = 1:Integer(d)
+  Blu         = (Integer(d)+1):(2*d)
+  m           = 2*d
+  y           = [ones(length(Red)); -ones(length(Blu))]
+  A           = 1*[randn(d,n); randn(d,n)]
+  A[Red,2]    = A[Red,2] + 4
+  A[Red,1]    = A[Red,1] + 3
+  A[Blu,2]    = A[Blu,2] + 5
+  w           = ones(2*d)
+
+  (pred,v) = svmcbisect(y, A, w, ones(size(y)), A, w/500, verbose = true)
 
 end

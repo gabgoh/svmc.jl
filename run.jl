@@ -32,9 +32,9 @@ if dataset == 2
   A[Blu[1:10],1] = A[Blu[1:10],1] - 10;    
 end
 
-e           = ones(length(y))
-y₊          = y .> 0
-y₋          = y .< 0
+e  = ones(length(y))
+y₊ = y .> 0
+y₋ = y .< 0
 
 ConstraintRange = linspace(1,2000,100)
 
