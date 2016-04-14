@@ -1,9 +1,13 @@
 using IntPoint
 using LIBSVM
 using DataFrames
+using ProgressMeter
+using Debug
 export svmc, svm
 include("bisect.jl")
 include("misc.jl")
+
+toplot = false
 
 function parseargs(y₀, A₀, w₀, P)
 
@@ -19,15 +23,15 @@ function parseargs(y₀, A₀, w₀, P)
   m_ = Array{Integer}(0)
   push!(w_, w₀); push!(A_, A₀); push!(y_, y₀); push!(m_, size(A₀,1))
 
-  for i = 1:(length(P)/3)   
-    push!(y_, P[3(i - 1) + 1]) 
+  for i = 1:(length(P)/3)
+    push!(y_, P[3(i - 1) + 1])
     push!(A_, P[3(i - 1) + 2])
     push!(w_, P[3(i - 1) + 3])
     push!(m_, size(P[3(i - 1) + 2],1))
   end
 
-  y     = sparse(cat(1, y_...)); 
-  w     = sparse(cat(1, w_...)); 
+  y     = sparse(cat(1, y_...));
+  w     = sparse(cat(1, w_...));
   A     = cat(1, A_...)
   wc    = sparse(cat(1, zeros(m_[1],k), w_[2:end]...))
 
@@ -47,14 +51,14 @@ function bias( y, A, w, xstar )
   yw = y.*w            # Potential gradient weights
 
   # Find all the discontinuties in the subgradient
-  # of the objective function 
+  # of the objective function
   #
   # f(ρ) = w'max{ 1 - Y(Ax - ρ) , 0 }
   #
   bpts = sort(((y.*A*xstar - 1)./y)[:])
 
   function ∂f(ρ)
-    z = z0 + y.*ρ   
+    z = z0 + y.*ρ
     I₊ = (z .> 0)[:]
     return sum(yw[I₊])
   end
@@ -103,14 +107,14 @@ function svmc(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
   #           uᵀe = 0
   #
   # Recover x = (YA)ᵀu
-  #         ρ = 
-  # ───────────────────────────────────────────────────────────────────  
+  #         ρ =
+  # ───────────────────────────────────────────────────────────────────
 
   (y_,A_,w_,m_) = parseargs(y₀, A₀, w₀, P)
 
   k     = Int(length(P)/3)
 
-  y     = sparse(cat(1, y_...)) 
+  y     = sparse(cat(1, y_...))
   w     = sparse(cat(1, w_...))
   A     =        cat(1, A_...)
   wc    = sparse(cat(1, zeros(m_[1],k), w_[2:end]...))
@@ -120,16 +124,16 @@ function svmc(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
   YA    = sparse(y.*A)
   Q     = [ YA; zeros(k,n) ]
 
-  # ───────────────────────────────────────────────────────────────────  
+  # ───────────────────────────────────────────────────────────────────
   # Inequality Constraints
   # ───────────────────────────────────────────────────────────────────
-  
+
   #      m            k                   │
-  Z = [  speye(m, m)  spzeros(m,k)  ; # m │ u ≧ 0   
-        -speye(m, m)  wc            ] # m │ u₀ ≦ w₀  
+  Z = [  speye(m, m)  spzeros(m,k)  ; # m │ u ≧ 0
+        -speye(m, m)  wc            ] # m │ u₀ ≦ w₀
   z = [  zeros(m,1)       ;           #   │
         -w₀               ;
-         zeros(m-m_[1],1) ] 
+         zeros(m-m_[1],1) ]
 
   U = Z[:,1:m]
   V = Z[:,m+1:end]
@@ -138,7 +142,7 @@ function svmc(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
   # Linear Constraints
   # ───────────────────────────────────────────────────────────────────
 
-  G = sparse([ y' zeros(1,k) ])    
+  G = sparse([ y' zeros(1,k) ])
   g = spzeros(1,1)
 
   # ───────────────────────────────────────────────────────────────────
@@ -149,21 +153,21 @@ function svmc(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
   # └                  ┘ └   ┘   └   ┘
   #
   # by solving the sparse 4x4 system
-  # 
-  #  U = Z[1:m]      
-  #  V = Z[m+1:m+k]  
-  #  
-  # and noting that 
+  #
+  #  U = Z[1:m]
+  #  V = Z[m+1:m+k]
+  #
+  # and noting that
   #          ┌    ┐    ┌     ┐   ┌              ┐
   #  Z'F²Z = │ U' │ F² │ U V │ = │ U'F²U  U'F²V │
   #          │ V' │    └     ┘   │ V'F²U  V'F²V │
   #          └    ┘              └              ┘
   # ┌                         ┐ ┌   ┐   ┌   ┐
-  # │ U'F²U  U'F²V  (YA)'  G  │ │ x │   │ a │ size m 
-  # │ V'F²U  V'F²V            │ │ r │ = │ 0 │ size k 
-  # │ YA             -I       │ │ s │ = │ 0 │ size n 
-  # │ G'                      │ │ y │ = │ b │ size 1 
-  # └                         ┘ └   ┘   └   ┘  
+  # │ U'F²U  U'F²V  (YA)'  G  │ │ x │   │ a │ size m
+  # │ V'F²U  V'F²V            │ │ r │ = │ 0 │ size k
+  # │ YA             -I       │ │ s │ = │ 0 │ size n
+  # │ G'                      │ │ y │ = │ b │ size 1
+  # └                         ┘ └   ┘   └   ┘
   # ───────────────────────────────────────────────────────────────────
   function solve2x2_sparseinv(F)
 
@@ -180,11 +184,11 @@ function svmc(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
 
     Γ = ldltfact(Γ)
 
-    function solve2x2(x,y) 
+    function solve2x2(x,y)
 
       xystar = Γ\[x; zeros(n); y]
       return (xystar[1:(m+k)]'', xystar[end:end]')
-    
+
     end
 
   end
@@ -211,18 +215,85 @@ end
 # ───────────────────────────────────────────────────────────────────
 # Wrapper around LIBSVM
 # ───────────────────────────────────────────────────────────────────
-@debug function svm(y, A, w; ϵ = 1e-6)
+function svm(y, A, w; ϵ = 1e-6)
 
   # Do training
   model  = svm_train(y, A', w, verbose = false, eps = ϵ)
   (x, ρ) = get_primal_variables(model)
   v      = abs(get_dual_variables(model))
-  
+
   pred = A -> (A*x - ρ)
 
   return (pred, v)
 
 end
+
+function ksvm(y,A,w; 
+  ϵ = 1e-6,
+  kernel::Int32 = 2,
+  γ = 1.,
+  coef0 = 1.,
+  degree = 2)
+
+  # function kpred(Ab, v, y, ρ, Φ)
+
+  #   n = size(Ab,1)
+  #   p = zeros(n)
+  #   nSV = size(v,1)
+
+  #   for j = 1:n
+  #     s = 0;
+  #     for i = 1:nSV;
+  #       if v[i] != 0
+  #         s = s + y[i]v[i]Φ(Ab[j,:],A[i,:]);
+  #       end
+  #     end
+  #     p[j] = s - ρ
+  #   end
+  #   return p
+
+  # end
+
+  # if kernel == 0
+  #    Φ(u,v) = vecdot(u,v)
+  # end
+
+  # if kernel == 1
+	 #   Φ(u,v) = (gamma*vecdot(u,v) + coef0)^degree
+  # end
+
+  # if kernel == 2
+  #   Φ(u,v) = exp( -1*gamma*norm(u - v)^2)
+  # end
+
+  # if kernel == 3
+  #   Φ(u,v) = tanh(gamma*vecdot(u,v) + coef0)
+  # end
+
+  # Do training
+  model  = svm_train(y, A', w, verbose = false, eps = ϵ,
+                     kernel_type = kernel,
+                     gamma = γ,
+                     coef0 = coef0,
+                     degree = degree)
+
+  # Get variables we need
+  v   = abs(get_dual_variables(model))
+  mdl = unsafe_load(model.ptr)
+  ρ   = unsafe_load(mdl.rho)
+
+  function predict(D)
+    s = zeros(size(D,1))
+    for i = 1:size(D,1)
+      s[i] = svm_predict(model, full(D[i,:])[:])[2][1]
+    end
+    return s
+  end
+
+  return (A -> predict(A), v)
+
+end
+
 
 function svm_intpoint(y, A, w; ϵ = 1e-6)
 
@@ -234,28 +305,14 @@ end
 
 # ───────────────────────────────────────────────────────────────────
 # Same interface as svmc, except using LIBSVM.
-# ───────────────────────────────────────────────────────────────────  
-@debug function svmcbisect(y₀, A₀, w₀, P...; 
-  ϵ = 1e-6, 
+# ───────────────────────────────────────────────────────────────────
+function svmcbisect(y₀, A₀, w₀, P...;
+  ϵ = 1e-6,
   verbose = false,
-  kernel = :linear )
-  
-  # Φ = 0
-  # if kernel == :linear
-  #   Φ(u,v) = u'v
-  # end
-
-  # if kernel == :polynoial
-  #   Φ(u,v) = (gamma*u'v + coef0)^degree
-  # end
-
-  # if kernel == :radialbasis
-  #   Φ(u,v) = exp(-gamma*|u-v|^2)
-  # end
-
-  # if kernel == :sigmoid
-  #   Φ(u,v) = tanh(gamma*u'*v + coef0)
-  # end
+  kernel = Int32(1),
+  γ = 1.,
+  coef0 = 1.,
+  degree = 1)
 
   (y_,A_,w_,m_) = parseargs(y₀, A₀, w₀, P)
 
@@ -271,29 +328,44 @@ end
     # Construct weighted SVM
     w      = [w_[1];t*w_[2]];
 
+    pre = x -> x
+
     # Do training
-    (pred, v) = svm(y,A,w,ϵ = ϵ)
+    if kernel == 0
+      (pre, v) = svm(y,A,w,ϵ = ϵ)
+    else
+      (pre, v) = ksvm(y,A,w,ϵ = ϵ,
+                      kernel = kernel,
+                      γ = γ,
+                      coef0 = coef0,
+                      degree = degree)
+    end
 
     # Calculate Primal/Dual objective values
-    x      = A'*(y.*v)
-    pval   = vecdot(w, max( 1 - (y.*pred(A)[:]), 0)) + 0.5*norm(x)^2
-    dval   = 0.5*norm(A'*(y.*v))^2 - sum(v)
-    
+    # x      = A'*(y.*v)
+    # pval   = vecdot(w, max( 1 - (y.*pred(A)[:]), 0)) + 0.5*norm(x)^2
+    # dval   = 0.5*norm(A'*(y.*v))^2 - sum(v)
+    SV   = v .!= 0
+    z    = pre(A)
+    α    = vecdot(z,y.*v)
+    pval = vecdot(w, max( 1 - y.*z, 0)) + 0.5*α
+    dval = 0.5*α - sum(v)
+
     # Gradient
     (m₀,n) = size(A₀)
 
-    gval   = vecdot(w_[2], max( 1 - (y_[2].*pred(A_[2])) , 0))
+    gval   = vecdot(w_[2], max( 1 - (y_[2].*pre(A_[2])) , 0))
 
     # Log information with each evaluation
-    pred_v[1] = pred; pred_v[2] = v;
+    pred_v[1] = pre; pred_v[2] = v;
 
     return (-pval + τ*t, dval + τ*t, gval - τ)
 
   end
 
   λ = bisect( (x,ϵ) -> svm_coverage_weights!(x,ϵ,1) ;
-              il = 0, iu = 10000/mean(w_[2]), 
-              tol = 0.01*mean(w_[2]) ,
+              il = 1e-5, iu = 100/mean(w_[2]),
+              tol = 1*mean(w_[2]) ,
               verbose = verbose)
 
   pred = pred_v[1]
@@ -305,16 +377,20 @@ end
 
 # ───────────────────────────────────────────────────────────────────
 # Ramp version of LIBSVM.
-# ───────────────────────────────────────────────────────────────────  
+# ───────────────────────────────────────────────────────────────────
 
-function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
+function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true, 
+  kernel::Int32   = Int32(0),
+  γ::Real         = 1.,
+  coef0::Real     = 1.,
+  degree::Integer = 2)
 
   (y,A,w,m) = parseargs(y₀, A₀, w₀, P)
 
   k = length(w)
 
   # Initilization
-  δ = Array{Any}(k) 
+  δ = Array{Any}(k)
   I = Array{Any}(k)
   RVal = ones(k)
   HVal = ones(k)
@@ -337,18 +413,22 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
   v = nothing
 
   for i = 1:10
-    
+
     (pred,v,λ) = svmcbisect( y[1][I[1]], A[1][I[1],:], w[1][I[1]],             # Objective
-                       y[2][I[2]], A[2][I[2],:], w[2][I[2]]/(1 - δ[2]),  # Constraint
-                       verbose = false )                  
+                             y[2][I[2]], A[2][I[2],:], w[2][I[2]]/(1 - δ[2]),  # Constraint
+                             verbose = false ,
+                             kernel = kernel,
+                             γ = γ,
+                             coef0 = coef0,
+                             degree = 2)
 
     for j = 1:length(y)
 
       z = y[j].*pred(A[j])
 
-      I[j] = ( z .> -1 )[:] 
-      δ[j] = 2*sum(w[j][ !I[j] ]) # Points upper bounded by constant 
-      
+      I[j] = ( z .> -1 )[:]
+      δ[j] = 2*sum(w[j][ !I[j] ]) # Points upper bounded by constant
+
       if δ[j] < 0; println("Infeasible! ", δ[j]); break; end
 
       RVal[j] = vecdot( w[j], R(z) )
@@ -356,27 +436,27 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
 
     end
 
-    ξ() = @printf("  ┃ %2i ┃ % 06.3e  % 06.3e  % 06.3e  % 06.3e   %i\n", 
-                  i, 
-                  RVal[1], RVal[2], 
-                  RVal[2] - 1, 
-                  HVal[2] - 1, 
+    ξ() = @printf("  ┃ %2i ┃ % 06.3e  % 06.3e  % 06.3e  % 06.3e   %i\n",
+                  i,
+                  RVal[1], RVal[2],
+                  RVal[2] - 1,
+                  HVal[2] - 1,
                   sum(I[1]) + sum(I[2])); ξ();
 
-    if abs(RVal[2] - 1) < 1e-3
-      println("  ┖────────────────────────────────────────────────────────────────── ")  
+    if abs(RVal[2] - 1) < 1*mean(w[2])
+      println("  ┖────────────────────────────────────────────────────────────────── ")
       return (pred, v)
     end
 
   end
 
-  println("  ┖────────────────────────────────────────────────────────────────── ")    
+  println("  ┖────────────────────────────────────────────────────────────────── ")
   return (pred, v)
 
 end
 
 function test1()
-  
+
   srand(1)
   n           = 4
   d           = 10000
@@ -397,7 +477,7 @@ function test1()
 end
 
 
-function test2()  
+function test2()
 
   srand(1)
   n           = 2

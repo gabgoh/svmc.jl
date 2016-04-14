@@ -16,7 +16,7 @@ end
 # (l,u,g) = f(x) where l + tg ≦ f(x) ≦ u ∀t
 # ───────────────────────────────────────────────────────────────────
 
-function bisect(f; tol = 0.001, il = 0, iu = 2, verbose = false)
+function bisect(f; tol = 0.001, il = 0, iu = 2, verbose = false, ε₀ = 0.001)
 
   if toplot
     clf()
@@ -61,7 +61,7 @@ function bisect(f; tol = 0.001, il = 0, iu = 2, verbose = false)
   end
 
   # Interval [0,2] containing the solution
-  (l,u,g) = f(il, 0.01);
+  (l,u,g) = f(il, ε₀);
   if toplot; plotline(0,2,il,l,g); end;
   push!(LB, l); push!(UB, u); push!(G, g); push!(X, il)
 
@@ -75,11 +75,11 @@ function bisect(f; tol = 0.001, il = 0, iu = 2, verbose = false)
     return 0
   end
 
-  (l,u,g) = f(iu, 0.01)
+  (l,u,g) = f(iu, ε₀)
   if toplot; plotline(0,2,iu,l,g); end;
   push!(LB, l); push!(UB, u); push!(G, g); push!(X, iu)
 
-  for i = 1:15
+  for i = 1:10
     
     ilp = il; iup = iu;
     (il, iu) = lowerboundinv(minimum(UB))
@@ -89,14 +89,14 @@ function bisect(f; tol = 0.001, il = 0, iu = 2, verbose = false)
     end
 
     x = (il + iu)/2.
-    ϵ = min(iu - il, 1.0)/10
+    ϵ = min(abs(g), 1)/1000
 
     j = 0
     for j = 1:3
       # If solution is not accuratae, restart the whole thing.
       (l,u,g) = f(x, ϵ)
       if abs((l - u)/(g*(il - iu))) < 0.3; break; end
-      ϵ = ϵ/10
+      ϵ = ϵ/100
     end
 
     push!(LB, l); push!(UB, u); push!(G, g); push!(X, x)
