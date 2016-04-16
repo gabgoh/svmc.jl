@@ -9,6 +9,45 @@ include("misc.jl")
 
 toplot = false
 
+function diagdot(A)
+  
+  n = size(A,1)
+  c = zeros(n)
+  for i = 1:size(A,1)
+    c[i] = vecdot(sub(A,i,:), sub(A,i,:))
+  end
+  return c
+
+end
+
+function dmat(A,B)
+
+  n = size(A,1)
+  m = size(B,1)
+
+  diagdot(A)*ones(1,m) + ones(n,1)*diagdot(B)' - 2*A*B'
+
+end
+
+function rbfpredict(A,B,v,y,ρ; degree = 2, coef0 = 1, γ = 1.) 
+
+  exp(-dmat(A,B)*γ)*(v.*y) - ρ
+
+end
+
+function polypredict(A,B,v,y,ρ; degree = 2, coef0 = 1, γ = 1.)
+
+  ((γ*A*B' + coef0).^degree)*(v.*y) - ρ
+
+end
+
+
+function tanhpredict(A,B,v,y,ρ; degree = 2, coef0 = 1, γ = 1.)
+
+  tanh(γ*A*B' + coef0)*(v.*y) - ρ
+
+end
+
 function parseargs(y₀, A₀, w₀, P)
 
   if length(P) % 3 != 0
@@ -235,43 +274,10 @@ function ksvm(y,A,w;
   coef0 = 1.,
   degree = 2)
 
-  # function kpred(Ab, v, y, ρ, Φ)
-
-  #   n = size(Ab,1)
-  #   p = zeros(n)
-  #   nSV = size(v,1)
-
-  #   for j = 1:n
-  #     s = 0;
-  #     for i = 1:nSV;
-  #       if v[i] != 0
-  #         s = s + y[i]v[i]Φ(Ab[j,:],A[i,:]);
-  #       end
-  #     end
-  #     p[j] = s - ρ
-  #   end
-  #   return p
-
-  # end
-
-  # if kernel == 0
-  #    Φ(u,v) = vecdot(u,v)
-  # end
-
-  # if kernel == 1
-	 #   Φ(u,v) = (gamma*vecdot(u,v) + coef0)^degree
-  # end
-
-  # if kernel == 2
-  #   Φ(u,v) = exp( -1*gamma*norm(u - v)^2)
-  # end
-
-  # if kernel == 3
-  #   Φ(u,v) = tanh(gamma*vecdot(u,v) + coef0)
-  # end
-
   # Do training
-  model  = svm_train(y, A', w, verbose = false, eps = ϵ,
+  model  = svm_train(y, A', w, 
+                     verbose = false, 
+                     eps = ϵ,
                      kernel_type = kernel,
                      gamma = γ,
                      coef0 = coef0,
@@ -282,6 +288,26 @@ function ksvm(y,A,w;
   mdl = unsafe_load(model.ptr)
   ρ   = unsafe_load(mdl.rho)
 
+  pred = nothing
+
+  if kernel == 0
+    (x, ρ) = get_primal_variables(model)
+    v      = abs(get_dual_variables(model))
+    pred = A -> (A*x - ρ)
+  end
+
+  if kernel == 1
+    pred = D -> polypredict(D,A,v,y,ρ; degree = degree, coef0 = coef0, γ = γ)
+  end
+
+  if kernel == 2
+    pred = D -> rbfpredict(D,A,v,y,ρ; degree = degree, coef0 = coef0, γ = γ)
+  end
+
+  if kernel == 3
+    pred = D -> tanhpredict(D,A,v,y,ρ; degree = degree, coef0 = coef0, γ = γ)
+  end
+
   function predict(D)
     s = zeros(size(D,1))
     for i = 1:size(D,1)
@@ -290,7 +316,7 @@ function ksvm(y,A,w;
     return s
   end
 
-  return (A -> predict(A), v)
+  return (predict, pred, v)
 
 end
 
