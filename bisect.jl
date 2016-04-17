@@ -22,7 +22,7 @@ function bisect(f; tol = 0.001, il = 0, iu = 2, verbose = false, ε₀ = 0.001)
     clf()
     L = zeros(0); U = zeros(0)
     R = linspace(il,iu,50)
-    @showprogress for t = R
+    for t = R
       (l,u,g) = f(t, 0.01)
       push!(L,l); push!(U,u)
     end

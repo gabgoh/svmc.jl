@@ -1,3 +1,4 @@
+
 using LIBSVM
 
 dataset = 1
@@ -7,8 +8,12 @@ toplot = false
 if dataset == 1
   (y,A)         = parse_libSVM("data/a1a")
   (ytest,Atest) = parse_libSVM("data/a1a.t")
-  Atest = Atest[1:119,:]
-  n = size(A,1)
+
+  n = max(size(A,1), size(Atest,1))
+  m = size(A,2)
+  A = [A; spzeros(n-size(A,1),size(A,2))]
+  Atest = [Atest; spzeros(n-size(Atest,1), size(Atest,2))]
+
   m = size(A,2)
   A = A'
   Atest = Atest'

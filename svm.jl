@@ -1,9 +1,7 @@
 using IntPoint
 using LIBSVM
 using DataFrames
-using ProgressMeter
-using Debug
-export svmc, svm
+
 include("bisect.jl")
 include("misc.jl")
 
@@ -29,22 +27,21 @@ function dmat(A,B)
 
 end
 
-function rbfpredict(A,B,v,y,ρ; degree = 2, coef0 = 1, γ = 1.) 
+function rbfmat(A,B; degree = 2, coef0 = 1, γ = 1.) 
 
-  exp(-dmat(A,B)*γ)*(v.*y) - ρ
-
-end
-
-function polypredict(A,B,v,y,ρ; degree = 2, coef0 = 1, γ = 1.)
-
-  ((γ*A*B' + coef0).^degree)*(v.*y) - ρ
+  exp(-dmat(A,B)*γ)
 
 end
 
+function polymat(A,B; degree = 2, coef0 = 1, γ = 1.)
 
-function tanhpredict(A,B,v,y,ρ; degree = 2, coef0 = 1, γ = 1.)
+  (γ*A*B' + coef0).^degree
 
-  tanh(γ*A*B' + coef0)*(v.*y) - ρ
+end
+
+function tanhmat(A,B; degree = 2, coef0 = 1, γ = 1.)
+
+  tanh(γ*A*B' + coef0)
 
 end
 
@@ -254,22 +251,9 @@ end
 # ───────────────────────────────────────────────────────────────────
 # Wrapper around LIBSVM
 # ───────────────────────────────────────────────────────────────────
-function svm(y, A, w; ϵ = 1e-6)
-
-  # Do training
-  model  = svm_train(y, A', w, verbose = false, eps = ϵ)
-  (x, ρ) = get_primal_variables(model)
-  v      = abs(get_dual_variables(model))
-
-  pred = A -> (A*x - ρ)
-
-  return (pred, v)
-
-end
-
-function ksvm(y,A,w; 
+function svm(y,A,w; 
   ϵ = 1e-6,
-  kernel::Int32 = 2,
+  kernel::Int32 = Int32(2),
   γ = 1.,
   coef0 = 1.,
   degree = 2)
@@ -287,6 +271,7 @@ function ksvm(y,A,w;
   v   = abs(get_dual_variables(model))
   mdl = unsafe_load(model.ptr)
   ρ   = unsafe_load(mdl.rho)
+  SV  = v .!= 0
 
   pred = nothing
 
@@ -297,29 +282,23 @@ function ksvm(y,A,w;
   end
 
   if kernel == 1
-    pred = D -> polypredict(D,A,v,y,ρ; degree = degree, coef0 = coef0, γ = γ)
+    pred = D -> (polymat(D,A[SV,:];
+                 degree=degree,coef0=coef0,γ=γ)*((v.*y)[SV]) - ρ)[:]
   end
 
   if kernel == 2
-    pred = D -> rbfpredict(D,A,v,y,ρ; degree = degree, coef0 = coef0, γ = γ)
+    pred = D -> (rbfmat(D,A[SV,:]; 
+                 degree=degree,coef0=coef0,γ=γ)*((v.*y)[SV]) - ρ)[:]
   end
 
   if kernel == 3
-    pred = D -> tanhpredict(D,A,v,y,ρ; degree = degree, coef0 = coef0, γ = γ)
+    pred = D -> (tanhmat(D,A[SV,:]; 
+                 degree=degree,coef0=coef0,γ=γ)*((v.*y)[SV]) - ρ)[:]
   end
 
-  function predict(D)
-    s = zeros(size(D,1))
-    for i = 1:size(D,1)
-      s[i] = svm_predict(model, full(D[i,:])[:])[2][1]
-    end
-    return s
-  end
-
-  return (predict, pred, v)
+  return (pred, v)
 
 end
-
 
 function svm_intpoint(y, A, w; ϵ = 1e-6)
 
@@ -335,7 +314,7 @@ end
 function svmcbisect(y₀, A₀, w₀, P...;
   ϵ = 1e-6,
   verbose = false,
-  kernel = Int32(1),
+  kernel = Int32(0),
   γ = 1.,
   coef0 = 1.,
   degree = 1)
@@ -357,15 +336,12 @@ function svmcbisect(y₀, A₀, w₀, P...;
     pre = x -> x
 
     # Do training
-    if kernel == 0
-      (pre, v) = svm(y,A,w,ϵ = ϵ)
-    else
-      (pre, v) = ksvm(y,A,w,ϵ = ϵ,
-                      kernel = kernel,
-                      γ = γ,
-                      coef0 = coef0,
-                      degree = degree)
-    end
+    (pre, v) = svm(y,A,w,
+                   ϵ = ϵ,
+                   kernel = kernel,
+                   γ = γ,
+                   coef0 = coef0,
+                   degree = degree)
 
     # Calculate Primal/Dual objective values
     # x      = A'*(y.*v)
@@ -501,7 +477,6 @@ function test1()
   @time (x1,ρ1,v1) = svm(y, A, w);
 
 end
-
 
 function test2()
 
