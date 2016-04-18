@@ -1,11 +1,12 @@
 
 using LIBSVM
 
-dataset = 1
+dataset = 2
 toplot = false
 
 # Adult Dataset
 if dataset == 1
+
   (y,A)         = parse_libSVM("data/a1a")
   (ytest,Atest) = parse_libSVM("data/a1a.t")
 
@@ -17,13 +18,15 @@ if dataset == 1
   m = size(A,2)
   A = A'
   Atest = Atest'
+
 end
 
 # Fake Dataset
 if dataset == 2
+
   srand(1)
   n           = 2
-  d           = 1000
+  d           = 100
   Red         = 1:Integer(d)
   Blu         = (Integer(d)+1):(2*d)
   m           = 2*d
@@ -34,4 +37,8 @@ if dataset == 2
   A[Blu,2]    = A[Blu,2] + 5
   A[Red[1],1:2] = [-2 5]
   A[Blu[1:10],1] = A[Blu[1:10],1] - 10;
+
+  Atest = A
+  ytest = y
+
 end

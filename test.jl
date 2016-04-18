@@ -1,35 +1,40 @@
-function genData()
+include("svm.jl")
 
-  srand(1)
-  n           = 4
-  d           = 100
-  Red         = 1:Integer(d)
-  Blu         = (Integer(d)+1):(2*d)
-  m           = 2*d
-  y           = [ones(length(Red)); -ones(length(Blu))]
-  A           = 1*[randn(d,n); randn(d,n)]
-  A[Red,2]    = A[Red,2] + 4
-  A[Red,1]    = A[Red,1] + 3
-  A[Blu,2]    = A[Blu,2] + 5
-  A           = 3*A
-  w           = rand(2*d)
+using Base.Test
 
-  return (y,A,w)
+srand(1)
+n           = 2
+d           = 200
+Red         = 1:Integer(d)
+Blu         = (Integer(d)+1):(2*d)
+m           = 2*d
+y           = [ones(length(Red)); -ones(length(Blu))]
+A           = 1*[randn(d,n); randn(d,n)]
+A[Red,2]    = A[Red,2] + 4
+A[Red,1]    = A[Red,1] + 3
+A[Blu,2]    = A[Blu,2] + 5
+A           = 3*A
+w           = rand(2*d)
+e           = ones(2*d)
 
-end
+(pred,v1)  = svmc(y, A, w)
+(pred,v2)  = svm(y, A, w)
 
-function test1()
+@test norm(v1 - v2,Inf)/m <= 1e-5
 
-  (y,A,w)    = genData()
-  (pred,v)   = svmc(y, A, w, ones(size(y)), A, w)
-  (pred,v1)  = svm(y, A, w);
+# Make sure SVMs behave in sane ways w.r. to 0 weights
 
-end
+Id = 50:200
 
-function test2()  
+e1 = ones(size(e))
+e1[Id] = e[Id]
 
-  (y,A,w) = genData()
-  (pred,v) = svmcbisect(y, A, w, ones(size(y)), A, w/500)
-  (pred,v) = svmc(y, A, w, ones(size(y)), A, w/500)
+(pred,v10)  = svmc(y, A, e1)
+(pred,v20)  = svm(y, A, e1)
 
-end
+@test norm(v10 - v20)/m <= 1e-5
+
+# Test constrained optimiztion
+
+svmramp(y,A,e,e,A,e/45)
+

@@ -31,26 +31,26 @@ params = Dict{Any,Any}( :kernel => Int32(2) ,
 # Bias Shift
 # ───────────────────────────────────────────────────────────────────
 
-(pred, v) = svm(y, A, e; params...)
+# (pred, v) = svm(y, A, e; params...)
 
-z = pred(Atest)[:]
-P = sortperm(z)
+# z = pred(Atest)[:]
+# P = sortperm(z)
 
-biasshift = DataFrame(fp = Float64[], fn  = Float64[])
+# biasshift = DataFrame(fp = Float64[], fn  = Float64[])
 
-for i = 1:100:size(P,1)
+# for i = 1:100:size(P,1)
 
-  prd = zeros(size(P,1))
-  prd[P[i+1:end]] =  1
-  prd[P[1:i]]     = -1
+#   prd = zeros(size(P,1))
+#   prd[P[i+1:end]] =  1
+#   prd[P[1:i]]     = -1
 
-  err = abs(prd - ytest)/2
-  fp  = sum(err[ytest₋])
-  fn  = sum(err[ytest₊])
+#   err = abs(prd - ytest)/2
+#   fp  = sum(err[ytest₋])
+#   fn  = sum(err[ytest₊])
 
-  push!(biasshift, [fp fn])
+#   push!(biasshift, [fp fn])
 
-end
+# end
 
 # ───────────────────────────────────────────────────────────────────
 # Hinge

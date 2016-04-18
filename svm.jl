@@ -23,6 +23,8 @@ function dmat(A,B)
   n = size(A,1)
   m = size(B,1)
 
+  println(n," ",m," ",size(A),size(B))
+
   diagdot(A)*ones(1,m) + ones(n,1)*diagdot(B)' - 2*A*B'
 
 end
@@ -253,14 +255,20 @@ end
 # ───────────────────────────────────────────────────────────────────
 function svm(y,A,w; 
   ϵ = 1e-6,
-  kernel::Int32 = Int32(2),
+  kernel::Int32 = Int32(0),
   γ = 1.,
   coef0 = 1.,
-  degree = 2)
+  degree = 2,
+  verbose = false)
+
+  # Indicies get messed up when there are 0 weights. So remove them
+  # before passing them into LIBSVM
+
+  Inz = !(w .== 0)
 
   # Do training
-  model  = svm_train(y, A', w, 
-                     verbose = false, 
+  model  = svm_train(y[Inz], A[Inz,:]', w[Inz], 
+                     verbose = verbose, 
                      eps = ϵ,
                      kernel_type = kernel,
                      gamma = γ,
@@ -268,7 +276,10 @@ function svm(y,A,w;
                      degree = degree)
 
   # Get variables we need
-  v   = abs(get_dual_variables(model))
+  v          = spzeros(size(w,1),1)
+  v₀         = abs(get_dual_variables(model))
+  v[Inz,:]   = v₀
+
   mdl = unsafe_load(model.ptr)
   ρ   = unsafe_load(mdl.rho)
   SV  = v .!= 0
@@ -277,7 +288,6 @@ function svm(y,A,w;
 
   if kernel == 0
     (x, ρ) = get_primal_variables(model)
-    v      = abs(get_dual_variables(model))
     pred = A -> (A*x - ρ)
   end
 
@@ -303,7 +313,8 @@ end
 function svm_intpoint(y, A, w; ϵ = 1e-6)
 
   # Do training
-  (pred, v) = svmc(y, A, w, verbose = false, ϵ = 1e-8)
+  (pred, v₀) = svmc(y, A, w, verbose = false, ϵ = 1e-8)
+
   return (pred, v)
 
 end
@@ -341,7 +352,8 @@ function svmcbisect(y₀, A₀, w₀, P...;
                    kernel = kernel,
                    γ = γ,
                    coef0 = coef0,
-                   degree = degree)
+                   degree = degree,
+                   verbose = false)
 
     # Calculate Primal/Dual objective values
     # x      = A'*(y.*v)
@@ -366,8 +378,8 @@ function svmcbisect(y₀, A₀, w₀, P...;
   end
 
   λ = bisect( (x,ϵ) -> svm_coverage_weights!(x,ϵ,1) ;
-              il = 1e-5, iu = 100/mean(w_[2]),
-              tol = 1*mean(w_[2]) ,
+              il = 1e-5, iu = 100/mean(w_[2][w_[2] != 0]),
+              tol = 1*mean(w_[2][w_[2] != 0]) ,
               verbose = verbose)
 
   pred = pred_v[1]
@@ -407,22 +419,26 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true,
   R(x) = min(max(1 - x, 0), 2)
   H(x) = max(1 - x, 0)
 
-  println()
-  println("     i ┃  R₀          H₀          R₁          H₁          t")
-  println("  ┎────────────────────────────────────────────────────────────────── ")
+  if verbose == true
+    println()
+    println("     i ┃  R₀          H₀          R₁          H₁          t")
+    println("  ┎────────────────────────────────────────────────────────────────── ")
+  end
 
   pred = nothing
   v = nothing
 
+  wᵢ = deepcopy(w)
+
   for i = 1:10
 
-    (pred,v,λ) = svmcbisect( y[1][I[1]], A[1][I[1],:], w[1][I[1]],             # Objective
-                             y[2][I[2]], A[2][I[2],:], w[2][I[2]]/(1 - δ[2]),  # Constraint
+    (pred,v,λ) = svmcbisect( y[1], A[1], wᵢ[1],  # Objective
+                             y[2], A[2], wᵢ[2],  # Constraint
                              verbose = false ,
                              kernel = kernel,
                              γ = γ,
                              coef0 = coef0,
-                             degree = 2)
+                             degree = 2 )
 
     for j = 1:length(y)
 
@@ -431,6 +447,14 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true,
       I[j] = ( z .> -1 )[:]
       δ[j] = 2*sum(w[j][ !I[j] ]) # Points upper bounded by constant
 
+      if j > 1
+        wᵢ[j][:] = (w[j]/(1 - δ[j]))[:]
+      else
+        wᵢ[j][:] = w[j][:]
+      end
+
+      wᵢ[j][!I[j]] = 0;
+
       if δ[j] < 0; println("Infeasible! ", δ[j]); break; end
 
       RVal[j] = vecdot( w[j], R(z) )
@@ -438,21 +462,31 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true,
 
     end
 
-    ξ() = @printf("  ┃ %2i ┃ % 06.3e  % 06.3e  % 06.3e  % 06.3e   %i\n",
-                  i,
-                  RVal[1], RVal[2],
-                  RVal[2] - 1,
-                  HVal[2] - 1,
-                  sum(I[1]) + sum(I[2])); ξ();
+    if verbose == true
+      ξ() = @printf("  ┃ %2i ┃ % 06.3e  % 06.3e  % 06.3e  % 06.3e   %i\n",
+                    i,
+                    RVal[1], RVal[2],
+                    RVal[2] - 1,
+                    HVal[2] - 1,
+                    sum(I[1]) + sum(I[2])); ξ();
+    end
 
     if abs(RVal[2] - 1) < 1*mean(w[2])
-      println("  ┖────────────────────────────────────────────────────────────────── ")
+
+      if verbose == true
+        println("  ┖────────────────────────────────────────────────────────────────── ")
+      end
+
       return (pred, v)
+
     end
 
   end
 
-  println("  ┖────────────────────────────────────────────────────────────────── ")
+  if verbose == true
+    println("  ┖────────────────────────────────────────────────────────────────── ")
+  end
+
   return (pred, v)
 
 end
