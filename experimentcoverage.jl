@@ -61,7 +61,7 @@ function hinge_experiment(η)
   tic()
   
   (pred, v, λ) = svmcbisect( y[y₊], A[y₊,:], e[y₊],
-                             y[y₋], A[y₋,:], e[y₋]/η ; verbose = false,
+                             y[y₋], A[y₋,:], e[y₋]/η ; verbose = true, tol = 0.01, maxiters = 100,
                              params ... )
 
   (err, fp, fn, tp, tn) = calc_error(Atest, ytest, pred)

@@ -4,7 +4,7 @@ using Base.Test
 
 srand(1)
 n           = 2
-d           = 200
+d           = 30
 Red         = 1:Integer(d)
 Blu         = (Integer(d)+1):(2*d)
 m           = 2*d
@@ -18,23 +18,40 @@ w           = rand(2*d)
 e           = ones(2*d)
 
 (pred,v1)  = svmc(y, A, w)
-(pred,v2)  = svm(y, A, w)
+(pred,v2)  = svm_libsvm(y, A, w)
 
 @test norm(v1 - v2,Inf)/m <= 1e-5
 
 # Make sure SVMs behave in sane ways w.r. to 0 weights
 
-Id = 50:200
+Id = round(Int,d/2):m
 
-e1 = ones(size(e))
+e1 = zeros(size(e))
 e1[Id] = e[Id]
 
-(pred,v10)  = svmc(y, A, e1)
-(pred,v20)  = svm(y, A, e1)
+(pred1,v10)  = svmc(y, A, e1)
+(pred2,v20)  = svm_libsvm(y, A, e1)
+(pred3,v30)  = svm_liblinear(y, A, e1)
 
 @test norm(v10 - v20)/m <= 1e-5
+@test norm(pred1(A) - pred2(A))/min(norm(pred1(A)),norm(pred2(A))) < 0.1
+@test norm(sign(pred1(A)) - sign(pred2(A))) == 0 # Same predictions
 
-# Test constrained optimiztion
+(pred,v11)  = svmc(y[Id], A[Id,:], e1[Id])
+(pred,v21)  = svm_libsvm(y[Id], A[Id,:], e1[Id])
 
-svmramp(y,A,e,e,A,e/45)
+@test norm(v10 - v20)/m <= 1e-5
+@test norm(v11 - v10[Id])/m <= 1e-5
+@test norm(v21 - v20[Id])/m <= 1e-5
+
+# Test constrained optimiztion. Make sure the interior point and
+# bisection methods give (roughly) the same answers.
+
+(pred1, v1) = svmc(y,A,e,e,A,e/45)
+(pred2, v2) = svmcbisect(y,A,e,e,A,e/45, 
+                         tol = 1e-6,verbose = true, maxiters = 15)
+
+@test norm(pred1(A) - pred2(A), Inf) < 0.01
+@test sum(abs(sign(pred1(A)) - sign(pred2(A)))) == 0
+
 

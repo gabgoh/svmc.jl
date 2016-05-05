@@ -16,7 +16,7 @@ end
 # (l,u,g) = f(x) where l + tg ≦ f(x) ≦ u ∀t
 # ───────────────────────────────────────────────────────────────────
 
-function bisect(f; tol = 0.001, il = 0, iu = 2, verbose = false, ε₀ = 0.001)
+function bisect(f; tol = 0.001, il = 0, iu = 2, verbose = false, ε₀ = 0.001,maxiters=10)
 
   if toplot
     clf()
@@ -79,7 +79,7 @@ function bisect(f; tol = 0.001, il = 0, iu = 2, verbose = false, ε₀ = 0.001)
   if toplot; plotline(0,2,iu,l,g); end;
   push!(LB, l); push!(UB, u); push!(G, g); push!(X, iu)
 
-  for i = 1:10
+  for i = 1:maxiters
     
     ilp = il; iup = iu;
     (il, iu) = lowerboundinv(minimum(UB))

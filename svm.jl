@@ -1,11 +1,28 @@
 using IntPoint
 using LIBSVM
+using LIBLINEAR
 using DataFrames
 
 include("bisect.jl")
 include("misc.jl")
 
 toplot = false
+
+function duality_gap(y, A, w, pre, v)
+
+    # Calculate Primal/Dual objective values
+    # x      = A'*(y.*v)
+    # pval   = vecdot(w, max( 1 - (y.*pred(A)[:]), 0)) + 0.5*norm(x)^2
+    # dval   = 0.5*norm(A'*(y.*v))^2 - sum(v)
+    SV   = v .!= 0
+    z    = pre(A)
+    α    = vecdot(z,y.*v)
+    pval = vecdot(w, max( 1 - y.*z, 0)) + 0.5*α
+    dval = 0.5*α - sum(v)
+
+    return pval, dval
+
+end
 
 function diagdot(A)
   
@@ -251,9 +268,9 @@ function svmc(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
 end
 
 # ───────────────────────────────────────────────────────────────────
-# Wrapper around LIBSVM
+# Wrapper around various SVM solvers
 # ───────────────────────────────────────────────────────────────────
-function svm(y,A,w; 
+function svm_libsvm(y,A,w; 
   ϵ = 1e-6,
   kernel::Int32 = Int32(0),
   γ = 1.,
@@ -310,12 +327,73 @@ function svm(y,A,w;
 
 end
 
-function svm_intpoint(y, A, w; ϵ = 1e-6)
+function svm_intpoint(y, A, w; ϵ = 1e-6, verbose = verbose)
 
   # Do training
-  (pred, v₀) = svmc(y, A, w, verbose = false, ϵ = 1e-8)
+  (pred, v₀) = svmc(y, A, w, verbose = verbose, ϵ = 1e-8)
 
-  return (pred, v)
+  return (pred, v₀)
+
+end
+
+function svm_liblinear(y,A,w; ϵ = 1e-11, verbose = false)
+
+  A = A'
+  P = sortperm(y, rev = true)
+  yP = y[P]
+  AP = A[:,P]
+  wP = w[P]
+  model = linear_train(yP, AP, wP; verbose=verbose, solver_type=Cint(3), eps = ϵ, bias = 1)
+  vP = sparsevec(model.SVI + 1, model.SV, size(y,1))
+  v = spzeros(size(vP,1),size(vP,2))
+  v[P] = vP
+  ρ = model.w[end]
+  x = model.w[1:end-1]
+
+  return(A -> (A*x + ρ), v)
+
+end
+
+function svm(y,A,w; 
+  ϵ = 1e-6,
+  kernel::Int32 = Int32(0),
+  γ = 1.,
+  coef0 = 1.,
+  degree = 2,
+  verbose = false,
+  solver = :svm_intpoint)
+
+
+  if solver == :libsvm
+
+    return svm_libsvm(y,A,w; 
+      ϵ = ϵ, 
+      kernel = kernel,
+      γ = γ, 
+      coef0 = coef0, 
+      degree = degree,
+      verbose = verbose )
+  
+  end
+
+
+  if solver == :liblinear
+
+    if kernel != Int32(0)
+      throw("Nonlinear kernels not supported for liblinear")
+    end
+    return svm_liblinear(y,A,w; ϵ = ϵ, verbose = verbose)
+
+  end
+  
+  if solver == :svm_intpoint
+
+    if kernel != Int32(0)
+      throw("Nonlinear kernels not supported for interior point")
+    end
+    return svm_intpoint(y,A,w; ϵ = ϵ, verbose = verbose)
+    
+  end
 
 end
 
@@ -323,12 +401,14 @@ end
 # Same interface as svmc, except using LIBSVM.
 # ───────────────────────────────────────────────────────────────────
 function svmcbisect(y₀, A₀, w₀, P...;
-  ϵ = 1e-6,
+  tol = 1,
+  maxiters = 10,
   verbose = false,
   kernel = Int32(0),
   γ = 1.,
   coef0 = 1.,
-  degree = 1)
+  degree = 1,
+  solver = :liblinear)
 
   (y_,A_,w_,m_) = parseargs(y₀, A₀, w₀, P)
 
@@ -353,17 +433,10 @@ function svmcbisect(y₀, A₀, w₀, P...;
                    γ = γ,
                    coef0 = coef0,
                    degree = degree,
-                   verbose = false)
+                   verbose = false,
+                   solver = solver)
 
-    # Calculate Primal/Dual objective values
-    # x      = A'*(y.*v)
-    # pval   = vecdot(w, max( 1 - (y.*pred(A)[:]), 0)) + 0.5*norm(x)^2
-    # dval   = 0.5*norm(A'*(y.*v))^2 - sum(v)
-    SV   = v .!= 0
-    z    = pre(A)
-    α    = vecdot(z,y.*v)
-    pval = vecdot(w, max( 1 - y.*z, 0)) + 0.5*α
-    dval = 0.5*α - sum(v)
+    (pval, dval) = duality_gap(y, A, w, pre,v)
 
     # Gradient
     (m₀,n) = size(A₀)
@@ -378,12 +451,13 @@ function svmcbisect(y₀, A₀, w₀, P...;
   end
 
   λ = bisect( (x,ϵ) -> svm_coverage_weights!(x,ϵ,1) ;
-              il = 1e-5, iu = 100/mean(w_[2][w_[2] != 0]),
-              tol = 1*mean(w_[2][w_[2] != 0]) ,
-              verbose = verbose)
+              il = 1e-5, iu = 10/mean(w_[2][w_[2] .!= 0]),
+              tol = tol*mean(w_[2][w_[2] .!= 0]) ,
+              verbose = verbose,
+              maxiters = maxiters)
 
   pred = pred_v[1]
-  v = pred_v[2]
+  v    = pred_v[2]
 
   return (pred, v, λ)
 
@@ -394,6 +468,8 @@ end
 # ───────────────────────────────────────────────────────────────────
 
 function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true, 
+  maxIters        = 100,
+  optTol          = 1e-10,
   kernel::Int32   = Int32(0),
   γ::Real         = 1.,
   coef0::Real     = 1.,
@@ -414,9 +490,12 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true,
     δ[j] = 0
   end
 
+  n = size(A₀,1)
   ρ = 0; λ = 0; x = zeros(n) # Initial Valuess
 
-  R(x) = min(max(1 - x, 0), 2)
+  R(x)  = min(max(1 - x, 0), 2)
+  #∇R(x) = if (x > 1 || x < -1); { return 0 } else { return -1; } end;
+ 
   H(x) = max(1 - x, 0)
 
   if verbose == true
@@ -427,18 +506,22 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true,
 
   pred = nothing
   v = nothing
+  λ = nothing
 
   wᵢ = deepcopy(w)
 
-  for i = 1:10
+  for i = 1:3
 
-    (pred,v,λ) = svmcbisect( y[1], A[1], wᵢ[1],  # Objective
-                             y[2], A[2], wᵢ[2],  # Constraint
-                             verbose = false ,
-                             kernel = kernel,
-                             γ = γ,
-                             coef0 = coef0,
-                             degree = 2 )
+    # (pred,v,λ) = svmcbisect( y[1], A[1], wᵢ[1],  # Objective
+    #                          y[2], A[2], wᵢ[2],  # Constraint
+    #                          verbose = false ,
+    #                          kernel = kernel,
+    #                          γ = γ,
+    #                          coef0 = coef0,
+    #                          degree = 2 )
+
+    (pred,v,λ) = svmc( y[1], A[1], wᵢ[1],  # Objective
+                       y[2], A[2], wᵢ[2], verbose = false, ϵ = 2e-5)
 
     for j = 1:length(y)
 
@@ -471,13 +554,13 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true,
                     sum(I[1]) + sum(I[2])); ξ();
     end
 
-    if abs(RVal[2] - 1) < 1*mean(w[2])
+    if abs(RVal[2] - 1) < optTol*mean(w[2])
 
       if verbose == true
         println("  ┖────────────────────────────────────────────────────────────────── ")
       end
 
-      return (pred, v)
+      return (pred, v, λ)
 
     end
 
@@ -487,7 +570,7 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true,
     println("  ┖────────────────────────────────────────────────────────────────── ")
   end
 
-  return (pred, v)
+  return (pred, v, λ)
 
 end
 
@@ -508,7 +591,7 @@ function test1()
   w           = rand(2*d)
 
   @time (x,ρ,v) = svmc(y, A, w, ones(size(y)), A, w)
-  @time (x1,ρ1,v1) = svm(y, A, w);
+  @time (x1,ρ1,v1) = svm_libsvm(y, A, w);
 
 end
 
