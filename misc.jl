@@ -1,4 +1,3 @@
-
 function calc_error(A, y, predict)
 
   err = 0; fp  = 0; fn  = 0; tp = sum(y.==1); tn = sum(y.==-1)

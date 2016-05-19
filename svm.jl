@@ -5,6 +5,7 @@ using DataFrames
 
 include("bisect.jl")
 include("misc.jl")
+#include("slicingbundle.jl")
 
 toplot = false
 
@@ -85,14 +86,6 @@ function parseargs(y₀, A₀, w₀, P)
     push!(m_, size(P[3(i - 1) + 2],1))
   end
 
-  y     = sparse(cat(1, y_...));
-  w     = sparse(cat(1, w_...));
-  A     = cat(1, A_...)
-  wc    = sparse(cat(1, zeros(m_[1],k), w_[2:end]...))
-
-  (m,n) = size(A)
-  k     = Int(length(P)/3)
-
   return (y_,A_,w_,m_)
 
 end
@@ -149,9 +142,9 @@ function svmc(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
   # Primal
   # ------
   # minimize. w₀ᵀmax{0, Y₀(A₀x + ρ) - 1}
-  #      s.t. w₁ᵀmax{0, Y₁(A₁x + ρ) - 1} ≦ 1
+  #      s.t. w₁ᵀmax{0, Y₁(A₁x + ρ) - 1} ≦ η₁
   #           ⋮
-  #           wᵣᵀmax{0, Yᵣ(Aᵣx + ρ) - 1} ≦ 1
+  #           wᵣᵀmax{0, Yᵣ(Aᵣx + ρ) - 1} ≦ ηᵣ
   # Dual
   # ------
   # minimize. ½‖(YA)ᵀu‖² + eᵀu + eᵀt
@@ -172,7 +165,11 @@ function svmc(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true)
   y     = sparse(cat(1, y_...))
   w     = sparse(cat(1, w_...))
   A     =        cat(1, A_...)
-  wc    = sparse(cat(1, zeros(m_[1],k), w_[2:end]...))
+  if k != 0
+    wc    = sparse([zeros(m_[1],k); cat([1 2], w_[2:end]...)])
+  else
+    wc = sparse(zeros(m_[1],k))
+  end
 
   (m,n) = size(A)
 
@@ -336,17 +333,24 @@ function svm_intpoint(y, A, w; ϵ = 1e-6, verbose = verbose)
 
 end
 
-function svm_liblinear(y,A,w; ϵ = 1e-11, verbose = false)
+function svm_liblinear(y,A,w; ϵ = 1e-5, verbose = true)
 
   A = A'
-  P = sortperm(y, rev = true)
+
+  # Sort data, remove 0 weights
+  P  = sortperm(y, rev = true)
+  P  = P[w[P] .!= 0]
+
   yP = y[P]
   AP = A[:,P]
   wP = w[P]
+
   model = linear_train(yP, AP, wP; verbose=verbose, solver_type=Cint(3), eps = ϵ, bias = 1)
   vP = sparsevec(model.SVI + 1, model.SV, size(y,1))
-  v = spzeros(size(vP,1),size(vP,2))
+  v = spzeros(size(y,1),size(y,2))
+  
   v[P] = vP
+
   ρ = model.w[end]
   x = model.w[1:end-1]
 
@@ -360,9 +364,8 @@ function svm(y,A,w;
   γ = 1.,
   coef0 = 1.,
   degree = 2,
-  verbose = false,
-  solver = :svm_intpoint)
-
+  verbose = true,
+  solver = :liblinear)
 
   if solver == :libsvm
 
@@ -400,15 +403,15 @@ end
 # ───────────────────────────────────────────────────────────────────
 # Same interface as svmc, except using LIBSVM.
 # ───────────────────────────────────────────────────────────────────
-function svmcbisect(y₀, A₀, w₀, P...;
-  tol = 1,
-  maxiters = 10,
+function svmc_bisect(y₀, A₀, w₀, P...;
+  tol = 0.1,
+  maxiters = 20,
   verbose = false,
   kernel = Int32(0),
   γ = 1.,
   coef0 = 1.,
   degree = 1,
-  solver = :liblinear)
+  solver = :libsvm)
 
   (y_,A_,w_,m_) = parseargs(y₀, A₀, w₀, P)
 
@@ -419,7 +422,7 @@ function svmcbisect(y₀, A₀, w₀, P...;
 
   # Todo fix some precision issues, as well as starting interval for search
   # 0-2 works well
-  function svm_coverage_weights!(t, ϵ = 2.0, τ = 10.)
+  function svmw!(t, ϵ = 2.0, τ = 10.)
 
     # Construct weighted SVM
     w      = [w_[1];t*w_[2]];
@@ -433,10 +436,10 @@ function svmcbisect(y₀, A₀, w₀, P...;
                    γ = γ,
                    coef0 = coef0,
                    degree = degree,
-                   verbose = false,
+                   verbose = true,
                    solver = solver)
 
-    (pval, dval) = duality_gap(y, A, w, pre,v)
+    (pval, dval) = duality_gap(y, A, w, pre, v)
 
     # Gradient
     (m₀,n) = size(A₀)
@@ -450,7 +453,7 @@ function svmcbisect(y₀, A₀, w₀, P...;
 
   end
 
-  λ = bisect( (x,ϵ) -> svm_coverage_weights!(x,ϵ,1) ;
+  λ = bisect( (x,ϵ) -> svmw!(x,ϵ,1) ;
               il = 1e-5, iu = 10/mean(w_[2][w_[2] .!= 0]),
               tol = tol*mean(w_[2][w_[2] .!= 0]) ,
               verbose = verbose,
@@ -473,7 +476,8 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true,
   kernel::Int32   = Int32(0),
   γ::Real         = 1.,
   coef0::Real     = 1.,
-  degree::Integer = 2)
+  degree::Integer = 2,
+  solver          = :liblinear)
 
   (y,A,w,m) = parseargs(y₀, A₀, w₀, P)
 
@@ -510,18 +514,19 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true,
 
   wᵢ = deepcopy(w)
 
-  for i = 1:3
+  for i = 1:8
 
-    # (pred,v,λ) = svmcbisect( y[1], A[1], wᵢ[1],  # Objective
-    #                          y[2], A[2], wᵢ[2],  # Constraint
-    #                          verbose = false ,
-    #                          kernel = kernel,
-    #                          γ = γ,
-    #                          coef0 = coef0,
-    #                          degree = 2 )
+    (pred,v,λ) = svmc_bisect( y[1], A[1], wᵢ[1],  # Objective
+                             y[2], A[2], wᵢ[2],  # Constraint
+                             verbose = false ,
+                             kernel = kernel,
+                             γ = γ,
+                             coef0 = coef0,
+                             degree = 2 ,
+                             solver = solver)
 
-    (pred,v,λ) = svmc( y[1], A[1], wᵢ[1],  # Objective
-                       y[2], A[2], wᵢ[2], verbose = false, ϵ = 2e-5)
+    # (pred,v,λ) = svmc( y[1], A[1], wᵢ[1],  # Objective
+    #                    y[2], A[2], wᵢ[2], verbose = false, ϵ = 2e-5)
 
     for j = 1:length(y)
 
@@ -571,6 +576,157 @@ function svmramp(y₀, A₀, w₀, P...; ϵ = 1e-6, verbose = true,
   end
 
   return (pred, v, λ)
+
+end
+
+function svm_oracle(y₀, A₀, w₀, P...; solver_params...)
+
+  (y_,A_,w_,m_) = parseargs(y₀, A₀, w₀, P)
+
+  y = cat(1, y_...)
+  A = cat(1, A_...)
+
+  n = length(y_) - 1
+  τ = ones(n)
+
+  function Ω(t, ϵ = 1e-6)
+
+    # Construct weighted SVM
+    z = [1;t]; w = cat(1,[z[i]*w_[i] for i = 1:length(w_)]...)
+
+    (pre, v) = svm(y,A,w;
+                   ϵ = ϵ,
+                   solver_params...)
+
+    (pval, dval) = duality_gap(y, A, w, pre, v)
+
+    gval = zeros(0)
+    
+    for i = 2:(n+1)
+      gi = vecdot(w_[i], max( 1 - (y_[i].*pre(A_[i])) , 0))
+      push!(gval, gi)
+    end
+    
+    return (-pval + vecdot(τ,t), dval + vecdot(τ,t), -gval + τ, pre, v)
+
+  end
+
+  return Ω
+
+end
+
+function svmc_epicut(y₀, A₀, w₀, P...; solver_params...)
+
+  (y_,A_,w_,m_) = parseargs(y₀, A₀, w₀, P)
+  nc            = length(w_)
+  ORACLE        = svm_oracle(y₀, A₀, w₀, P...; solver_params...)
+
+  η = Float64[mean(w_[i][w_[i] .!= 0]) for i = 2:nc]
+
+  # Generate Initial Polyhedra
+  P₀ = box( length(η)+1   , 
+           [ 0 ; 0.0001 ] , 
+           [ 0 ; (3./η) ] )
+
+  P₀.A = P₀.A[2:end,:]; P₀.b = P₀.b[2:end] # Remove original lower bound
+  (l,u,g,_,_) = ORACLE(η*1.5, 1.0);        # Generate lower bound from oracle  
+
+  # Lower bound from oracle
+  b = vecdot(η/2,g) - l
+  push!(P₀, [-1 g[:]'], b + abs(b)) # Make a more conserverative lowe bound
+
+  λ             = sbundle((x,ϵ) -> ORACLE(x,ϵ)[1:3], P₀, max_iters = 10)
+  (_,_,_,pre,v) = ORACLE(λ)
+
+  return (pre, v, λ)
+
+end
+
+# ───────────────────────────────────────────────────────────────────
+# Variation on vanilla SVM which allows the margin to be shifted
+# for individual data components
+# ───────────────────────────────────────────────────────────────────
+
+function svmshift(y, A, w, s, ϵ = 1e-4, verbose = true)
+
+  # ───────────────────────────────────────────────────────────────────
+  # Constrained Support Vector Machine
+  #
+  # (aᵢ, yᵢ) are features/labels for point i
+  # aᵢ are rows of A
+  # yᵢ ∈ {-1,1}
+  #
+  # Primal
+  # ------
+  # minimize. wᵀmax{0, Y₀(A₀x + ρ) - s}
+  # Dual
+  # ------
+  # minimize. ½‖(YA)ᵀu‖² + zᵀu 
+  #      s.t. 0 ≦ u ≦ w
+  #
+  # Recover x = (YA)ᵀu
+  # ───────────────────────────────────────────────────────────────────
+
+  (m,n) = size(A)
+
+  A  = [ones(size(A,1),1) A]; n = n + 1
+  YA = sparse(y.*A)
+  Q  = YA
+
+  # ───────────────────────────────────────────────────────────────────
+  # Inequality Constraints
+  # ───────────────────────────────────────────────────────────────────
+
+  Z = [  speye(m, m) ; # m │ u ≧ 0
+        -speye(m, m) ] # m │ u₀ ≦ w₀
+  
+  z = [  zeros(m,1)    ;           #   │
+        -w             ;]
+
+  # ───────────────────────────────────────────────────────────────────
+  # Solve
+  # QQᵀ + Z'F²Z
+  # ───────────────────────────────────────────────────────────────────
+  QQᵀ = IntPoint.SymWoodbury(Diag(zeros(m)), full(Q), eye(n));
+
+  function solve2x2_sparseinv(F)
+
+    v = inv(F[1]*F[1]).diag
+    D = Diag(v[1:m] + v[m+1:end])
+    invHD = IntPoint.SymWoodburyMatrices.liftFactor(QQᵀ + D);
+    return (rhs, _ )  -> (invHD(rhs), zeros(0,1));
+
+  end
+
+  sol = IntPoint.intpoint(QQᵀ, s'',
+                          Z  , z  , [("R", 2*m )];
+                          optTol = ϵ,
+                          maxRefinementSteps = 4,
+                          solve2x2gen = solve2x2_sparseinv,                          
+                          verbose = verbose)
+
+  vsol = sol.y
+  xsol = A'*(y.*vsol)
+
+  return (A -> [ones(size(A,1),1) A]*xsol, vsol)
+
+end
+
+function loadmodel(y₀, A₀, w₀, P...; solver = :liblinear, v = nothing, λ = nothing)
+
+  if solver == :liblinear
+    
+    (y_,A_,w_,m_) = parseargs(y₀, A₀, w₀, P)
+
+    y = cat(1, y_...)
+    A = cat(1, A_...)
+    
+    x = A'*(y.*v)
+    ρ = sum(y.*v)
+
+    return (A -> A*x + ρ, v)
+  end
+
 
 end
 

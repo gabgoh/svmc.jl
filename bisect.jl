@@ -79,6 +79,8 @@ function bisect(f; tol = 0.001, il = 0, iu = 2, verbose = false, ε₀ = 0.001,m
   if toplot; plotline(0,2,iu,l,g); end;
   push!(LB, l); push!(UB, u); push!(G, g); push!(X, iu)
 
+  x = NaN
+
   for i = 1:maxiters
     
     ilp = il; iup = iu;
@@ -112,10 +114,12 @@ function bisect(f; tol = 0.001, il = 0, iu = 2, verbose = false, ε₀ = 0.001,m
       if verbose
         println("  ┖─────────────────────────────────────────────────────────── ")
       end
-      return x; 
+      return x
     end
 
   end
+
+  return x
 
   if verbose
     println("  ┖─────────────────────────────────────────────────────────── ")

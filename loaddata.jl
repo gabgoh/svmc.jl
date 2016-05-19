@@ -1,14 +1,13 @@
-
 using LIBSVM
 
-dataset = 2
+dataset = 1
 toplot = false
 
 # Adult Dataset
 if dataset == 1
 
-  (y,A)         = parse_libSVM("data/a1a")
-  (ytest,Atest) = parse_libSVM("data/a1a.t")
+  (y,A)         = parse_libSVM("data/a9a")
+  (ytest,Atest) = parse_libSVM("data/a9a.t")
 
   n = max(size(A,1), size(Atest,1))
   m = size(A,2)
@@ -20,6 +19,7 @@ if dataset == 1
   Atest = Atest'
 
 end
+
 
 # Fake Dataset
 if dataset == 2
@@ -40,5 +40,12 @@ if dataset == 2
 
   Atest = A
   ytest = y
+
+end
+
+if dataset == 3
+
+  (y,A) = parse_libSVM("data/rcv1_train")
+  (ytest,Atest) = parse_libSVM("data/rcv1_test")
 
 end

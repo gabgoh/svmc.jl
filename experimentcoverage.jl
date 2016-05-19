@@ -20,8 +20,9 @@ ytest₋ = ytest .< 0
 ConstraintRange = linspace(1,size(A,1)*1.5,32)
 
 params = Dict{Any,Any}( :kernel => Int32(1) , 
-                        :degree => 2, 
-                        :γ => 1. )
+                        :degree => 2        , 
+                        :γ => 1.            ,
+                        :solver => :libsvm )
 
 # params = Dict{Any,Any}( :kernel => Int32(2) , 
 #                         :degree => 2, 
@@ -31,26 +32,32 @@ params = Dict{Any,Any}( :kernel => Int32(1) ,
 # Bias Shift
 # ───────────────────────────────────────────────────────────────────
 
-# (pred, v) = svm(y, A, e; params...)
+function biasshift()
 
-# z = pred(Atest)[:]
-# P = sortperm(z)
+  (pred, v) = svm(y, A, e; params...)
 
-# biasshift = DataFrame(fp = Float64[], fn  = Float64[])
+  z = pred(Atest)[:]
+  P = sortperm(z)
 
-# for i = 1:100:size(P,1)
+  biasshift = DataFrame(fp = Float64[], fn  = Float64[])
 
-#   prd = zeros(size(P,1))
-#   prd[P[i+1:end]] =  1
-#   prd[P[1:i]]     = -1
+  for i = 1:100:size(P,1)
 
-#   err = abs(prd - ytest)/2
-#   fp  = sum(err[ytest₋])
-#   fn  = sum(err[ytest₊])
+    prd = zeros(size(P,1))
+    prd[P[i+1:end]] =  1
+    prd[P[1:i]]     = -1
 
-#   push!(biasshift, [fp fn])
+    err = abs(prd - ytest)/2
+    fp  = sum(err[ytest₋])
+    fn  = sum(err[ytest₊])
 
-# end
+    push!(biasshift, [fp fn])
+
+  end
+
+  return biasshift
+
+end
 
 # ───────────────────────────────────────────────────────────────────
 # Hinge
@@ -60,15 +67,23 @@ function hinge_experiment(η)
   
   tic()
   
-  (pred, v, λ) = svmcbisect( y[y₊], A[y₊,:], e[y₊],
-                             y[y₋], A[y₋,:], e[y₋]/η ; verbose = true, tol = 0.01, maxiters = 100,
-                             params ... )
+  (pred, v, λ) = svmc_bisect( y[y₊], A[y₊,:], e[y₊],
+                              y[y₋], A[y₋,:], e[y₋]/η ;
+                              verbose = true,
+                              params ... )
 
-  (err, fp, fn, tp, tn) = calc_error(Atest, ytest, pred)
+  (errt, fpt, fnt, tpt, tnt) = calc_error(A, y, pred)
+  (err,  fp,  fn,  tp,  tn ) = calc_error(Atest, ytest, pred)
 
   println( η, "\t", err, "\t", fp, "\t", fn, "\t", λ)
 
-  return Dict{Symbol, Any}(:fp => fp, :fn => fn, :v => v, :runtime => toc())
+  return (Dict{Symbol, Any}(:fp => fp, 
+                           :fn => fn, 
+                           :fpt => fpt,
+                           :fnt => fnt,
+                           :η => η,
+                           :λ => λ,
+                           :runtime => toc()), v)
 
 end
 
@@ -79,15 +94,41 @@ end
 function ramp_experiment(η)
 
   tic()
+  try
+    (pred, v, λ) = svmramp( y[y₊], A[y₊,:], e[y₊],
+                         y[y₋], A[y₋,:], e[y₋]/η ; verbose = true,
+                         params...)
 
-  (pred, v) = svmramp( y[y₊], A[y₊,:], e[y₊],
-                       y[y₋], A[y₋,:], e[y₋]/η ; verbose = true,
-                       params...)
+    (errt, fpt, fnt, tpt, tnt) = calc_error(A, y, pred)
+    (err, fp, fn, tp, tn) = calc_error(Atest, ytest, pred)
 
-  (err, fp, fn, tp, tn) = calc_error(Atest, ytest, pred)
+    println( η, "\t", err, "\t", fp, "\t", fn)
 
-  println( η, "\t", err, "\t", fp, "\t", fn)
+    return (Dict{Symbol, Any}(:fp => fp, 
+                             :fn => fn, 
+                             :fpt => fpt,
+                             :fnt => fnt,
+                             :η => η,
+                             :λ => λ,
+                             :runtime => toc()), v)
+  end
 
-  return Dict{Symbol, Any}(:fp => fp, :fn => fn, :v => v, :runtime => toc())
+    return (Dict{Symbol, Any}(:fp => NaN, 
+                             :fn => NaN, 
+                             :fpt => NaN,
+                             :fnt => NaN,
+                             :η => NaN,
+                             :λ => NaN,
+                             :runtime => toc()), NaN)
+
+end
+
+# ───────────────────────────────────────────────────────────────────
+# Save
+# ───────────────────────────────────────────────────────────────────
+
+function save(z)
+
+  
 
 end
