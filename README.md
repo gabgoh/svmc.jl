@@ -2,14 +2,14 @@
 
 Solves the ramp constrained optimization problem
 ```
-minimize    w₀ᵀmin{max{1 - Y₀A₀x},2} + ½xᵀx
-s.t.         wᵢᵀmin{max{1 - YᵢAᵢx},2} ≦ 1
+minimizeₓ   w₀ᵀmin{max{1 - Y₀(A₀x - b)},2} + ½xᵀx
+s.t.        wᵢᵀmin{max{1 - Yᵢ(Aᵢx - b)},2} ≦ 1
 ```
 
 And the hinge constrained optimization problem
 ```
-minimize_x    w₀ᵀmax(1 - Y₀A₀x, 0) + ½xᵀx
-s.t.          wᵢᵀmax(1 - YᵢAᵢx, 0) ≦ 1
+minimizeₓ     w₀ᵀmax(1 - Y₀(A₀x - b), 0) + ½xᵀx
+s.t.          wᵢᵀmax(1 - Yᵢ(Aᵢx - b), 0) ≦ 1
 ```
 
 ## Example - Neyman-Pearson Learning
